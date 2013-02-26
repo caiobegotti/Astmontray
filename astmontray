@@ -1,0 +1,325 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2008, Caio Begotti. All rights reserved.
+# Astmontray: a systray monitor applet for multiple Asterisk PBX servers.
+#
+# This file is free software. You are free to use this file in any way you like
+# However, if you change it you should note in this file that you did and who
+# you are, you also need to change the version string if you do. That way
+# I will not get support questions for software that is not entirely mine.
+
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+# WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO
+# EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+# EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# to detect environment and general use
+import sys
+import commands
+
+# open sockets without blocking the app
+import thread
+import time
+
+# used for the .conf file
+import ConfigParser
+import os
+
+# to connect to AMI
+from socket import *
+
+# qt's signal/slot support
+from PyQt4.QtCore import QString
+from PyQt4.QtCore import QObject
+from PyQt4.QtCore import SIGNAL
+from PyQt4.QtCore import SLOT
+
+# for the GUI objects
+from PyQt4.QtGui import QIcon
+from PyQt4.QtGui import QMenu
+from PyQt4.QtGui import QCursor
+from PyQt4.QtGui import QAction
+from PyQt4.QtGui import QLabel
+from PyQt4.QtGui import qApp
+from PyQt4.QtGui import QApplication
+from PyQt4.QtGui import QSystemTrayIcon
+from PyQt4.QtGui import QMainWindow
+from PyQt4.QtGui import QDesktopWidget
+
+def main():
+	app = QApplication(sys.argv)
+	tray = Systray()
+	sys.exit(app.exec_())
+
+class Systray(QMainWindow):
+	def __init__(self):
+		QMainWindow.__init__(self)
+
+		# the main action of the app, must exist
+		self.quitAction = QAction(QIcon("icons/exit.png"), 'Quit', self)
+		QObject.connect(self.quitAction, SIGNAL('triggered()'), QApplication.instance(), SLOT('quit()'))
+
+		# how can we avoid the closing of the app just by clicking on it?
+		self.aboutAction = QAction('About Astmontray', self)
+		QObject.connect(self.aboutAction, SIGNAL('triggered()'), self.aboutDialog)
+
+		#self.reloadAction = QAction('Recheck all servers', self)
+		#QObject.connect(self.reloadAction, SIGNAL('triggered()'), self.reloadSettings)
+
+		# we can't call it from the non-GUI thread below, have to use signals
+		QObject.connect(self, SIGNAL('timeout()'), self.reloadSettings)
+
+		if QSystemTrayIcon.isSystemTrayAvailable():
+			self.createTrayIcon()
+		else:
+			print 'No system tray is available, aborting.'
+			sys.exit(1)
+
+		self.rt = thread.start_new_thread(self.threadReload, ('reloadThread',))
+
+	def threadReload(self, param):
+		while True:
+			time.sleep(30)
+			self.emit(SIGNAL("timeout()"))
+
+	def reloadSettings(self):
+		self.createTrayIcon()
+
+	def closeEvent(self, event):
+		self.hide()
+		event.ignore()
+
+	def aboutDialog(self):
+		text = self.tr('<center>'
+				'<img source="icons/astmontray.png">'
+				'<h1>Astmontray</h1>'
+				'<p>A small PyQt4 systray applet to monitor<br>multiple Asterisk PBX servers.</p>'
+				'<p><small>Copyright &copy; 2008 Caio Begotti<br>'
+				'<a href="http://astmontray.sourceforge.net/">More info about Astmontray</a></small></p>'
+				'</center>')
+		message = QLabel(self)
+		message.setText(text)
+
+		# build the window and put our info on it
+		self.setCentralWidget(message)
+		self.setWindowTitle('About Astmontray')
+		self.setWindowIcon((QIcon('icons/astmontray.png')))
+		self.setFixedSize(275, 250)
+
+		# center the window according the screen size
+		size =  self.geometry()
+		screen = QDesktopWidget().screenGeometry()
+		self.move((screen.width()-size.width())/2,
+			(screen.height()-size.height())/2)
+
+		# display it now
+		self.show()
+
+	def setIcon(self):
+		os = self.detectEnv()
+		if 'linux' in os:
+			iconPath = QString('icons/linux/systray.png')
+		elif 'osx' in os:
+			iconPath = QString('icons/osx/systray.png')
+		elif 'win' in os:
+			iconPath = QString('icons/win/systray.png')
+		elif 'maemo' in os:
+			iconPath = QString('icons/maemo/systray.png')
+
+		iconObject = QIcon(iconPath)
+		return QSystemTrayIcon(iconObject)
+
+	def openSocket(self, entry, host, port, ttl, username, secret):
+		# i have no idea why using QIcon is reporting it's not thread-safe when calling QtGui.QAction here,
+		# maybe it's because of QPixmap and we can change this to use QImage? help me :-)
+
+		port = int(port)
+		error = False
+		s = socket(AF_INET, SOCK_STREAM)
+		os = self.detectEnv() # make that a fixed value at __init__ or something like that
+
+		if ttl:
+			# a default value of 20 would be enough
+			s.settimeout(int(ttl))
+
+		if not host or not port:
+			print 'Skipping entry %s, you need a host and port pair to connect to it' % entry
+			return
+
+		# somewhat generic error messages are enough
+		socketError = 'Could not connect via socket to %s:%d' % (host, port)
+		dataError = 'Could not get data from %s:%d' % (host, port)
+
+		iconOk = QIcon('icons/' + os + '/ok.png')
+		iconHalfOk = QIcon('icons/' + os + '/halfok.png')
+		iconNotOk = QIcon('icons/' + os + '/notok.png')
+
+		if username and secret:
+			try:
+				s.connect((host, port))
+				try:
+					# send auth info for an AMI handshake
+					s.send('action: login\r\nusername: %s\r\nsecret: %s\r\n\r\naction: ping\r\n\r\n' % (username, secret))
+					amidata = s.recv(1024)
+
+					s.send('action: ping\r\n\r\n')
+					pingdata = s.recv(1024)
+					try:
+						# using auth, got a pong back?
+						if 'Ping: Pong' in pingdata:
+							release = amidata.split('/')
+							if '1.1\r\n' in release[1]:
+								version = '1.6'
+							else:
+								version = '1.4'
+							# add it to the menu
+							self.item = QAction(iconOk, 'Server %s at %s is up (%s)' % (entry, host, version), self)
+							self.trayIconMenu.addAction(self.item)
+					except:
+						print dataError
+						error = True
+				except:
+					print dataError
+					error = True
+			except:
+				print socketError
+				error = True
+
+			if error:
+				self.item = QAction(iconNotOk, 'Error on %s at %s' % (entry, host), self)
+				self.trayIconMenu.addAction(self.item)
+			s.close()
+			s = None
+			thread.exit()
+		else:
+			try:
+				s.connect((host, 5038))
+				try:
+					# no auth will only return the AMI version
+					data = s.recv(1024)
+	
+					release = data.split('/')
+					if '1.1\r\n' in release[1]:
+						version = '1.6'
+					else:
+						version = '1.4'
+	
+					# partially reacheable
+					self.item = QAction(iconHalfOk, 'Server %s at %s seems up (%s)' % (entry, host, version), self)
+					self.trayIconMenu.addAction(self.item)
+				except:
+					print dataError
+					error = True
+			except:
+				print socketError
+				error = True
+
+			if error:
+				self.item = QAction(iconNotOk, 'Error on %s at %s' % (entry, host), self)
+				self.trayIconMenu.addAction(self.item)
+			s.close()
+			s = None
+			thread.exit()
+
+	def returnConfig(self):
+		etc = '/etc/'
+		ast = '/asterisk/'
+		conf = 'astmontray.conf'
+		if os.path.isfile(etc + ast + conf):
+			return etc + ast+ conf
+		elif os.path.isfile(etc + conf):
+			return etc + conf
+		elif os.path.isfile(conf):
+			return conf
+
+	def parseConfig(self, file):
+		config = ConfigParser.ConfigParser()
+		try:
+			config.read(file)
+		except:
+			print 'Error on reading the configuration file ' + file
+			sys.exit(1)
+		
+		# servers categories, like contexts in asterisk
+		for section in config.sections():
+			host, port, ttl, username, secret = '', '', '', '', ''
+			for option in config.options(section):
+				entry = config.get(section, option)
+				if 'host' in option:
+					host = entry
+				elif 'port' in option:
+					port = entry
+				elif 'ttl' in option:
+					ttl = entry
+				elif 'username' in option:
+					username = entry
+				elif 'secret' in option:
+					secret = entry
+			try:
+				# is there a better, cleaner, safer way to use threads with such simple scheme?
+				thread.start_new_thread(self.openSocket, tuple([section, host, port, ttl, username, secret]))
+			except:
+				print 'Could not create thread to process %s data' % host
+
+	def detectEnv(self):
+		os = sys.platform
+
+		# i'm not really sure that's the best way to detect we're
+		# running on nokia's maemo environment, though it's working
+		node = commands.getoutput('uname -n')
+
+		if 'linux2' in os and 'Nokia' in node:
+			system = 'maemo'
+		elif 'darwin' in os:
+			system = 'osx'
+		elif 'win32' in os:
+			system = 'win'
+		else:
+			system = 'linux'
+
+		return system
+
+	def trayBehavior(self, reason):
+		# on osx you only click on a systray application with the left mouse button,
+		# since we're using context menus (right clicks) two menus show up: one is fine,
+		# the other is centered in the screen, which is bad. on maemo it's almost
+		# the same problem, though there's no way to right click on systray applets,
+		# that's why we're using the hack below until we find a proper solution for this
+		os = self.detectEnv()
+		if reason != QSystemTrayIcon.Context:
+			if not 'osx' in os and not 'linux' in os and not 'win' in os:
+				self.trayIcon.contextMenu().exec_(QCursor.pos())
+
+	def createTrayIcon(self):
+		self.trayIconMenu = QMenu(self)
+		self.trayIconMenu.clear()
+
+		# on maemo, gnome and osx we want quitAction to be the first top
+		# item on the menu because we might have tons of servers to monitor
+		# that would make it a PITA to scroll it down just to quit
+		self.trayIconMenu.addAction(self.quitAction)
+		self.trayIconMenu.addAction(self.aboutAction)
+		#self.trayIconMenu.addAction(self.reloadAction)
+		self.trayIconMenu.addSeparator()
+		self.trayIcon = self.setIcon()
+		self.trayIcon.setContextMenu(self.trayIconMenu)
+		self.trayIcon.show()
+
+		# try to populate it now
+		file = self.returnConfig()
+		if file:
+			self.parseConfig(file) # that should be inside a threaded loop or something
+		else:
+			print 'Could not find a usable astmontray.conf to parse'
+
+		# we need to sort this out later, but for now let's just use right clicks
+		QObject.connect(self.trayIcon, SIGNAL('activated(QSystemTrayIcon::ActivationReason)'), self.trayBehavior)
+		
+if __name__ == '__main__':
+	main()
