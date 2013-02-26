@@ -1,0 +1,8 @@
+- close/clean/flush/terminate open sockets before opening new ones
+- test with no connection, no DNS, 404 and ipv6
+- sort the menu entries by server name, if possible
+- find a way to put all messageboxes stacked together, visually
+- use the amapi code to open sockets and send/retrieve AMI data
+- redo the socket and thread parts using qt's code
+- list astmontray at http://www.diotavelli.net/PyQtWiki/SomeExistingApplications
+- support http://svn.pythonmac.org/py2app for mac users

@@ -1,0 +1,24 @@
+; you can have neat context names so they're easily
+; reconizable in the menu interface
+[caio's pbx]
+host=localhost
+
+; AMI user so you get a full response from this server
+username=x
+
+; AMI password for the above 'username'
+secret=x
+
+; AMI port on the remote server specified in 'host'
+port=5038
+
+; time to live: how many seconds to wait for a response
+; from this server (60 would be too much, 10 is good)
+ttl=10
+
+; if you don't specify an username and secret for the server entry
+; then the ping response will be considered 'half' good, but it will work
+[campus phone central]
+host=pbx.mit.edu
+port=5038
+ttl=30

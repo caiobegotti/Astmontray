@@ -1,0 +1,52 @@
+ABOUT
+	Astmontray is a very simple monitor applet to use in the system tray
+	area ("systray" for windows users, "the clock area" for linux nerds
+	and "on the bar" for osx kids). Its main purpose is merely to know
+	if a list of Asterisk PBX servers are alive and kicking. Nothing
+	more than that. It's not a Nagios replacement, not a full-featured
+	monitor application. It is an applet. An applet.
+
+	Astmontray is my first Python script ever made, so bear with me
+	if you don't find the quality of code good enough :-) it's also
+	my first attempt to use Qt4, basically by reading the examples and
+	code reference from the sources.
+
+	If it's responding to pings (not regular pings, but pings through
+	the Asterisk Manager Interface) then it's all ok, if it's not then
+	the server is probably down and you might want to check it out. If
+	don't have AMI authentication enabled then your monitoring will be
+	half complete and all status on the applet menu will be marked
+	differently from the ones with authenticated users.
+
+
+CONFIGURING
+	The syntax of astmontray.conf is quite similar to the one used
+	by Asterisk configuration files: a sort of .ini text file, categories
+	plus entries and their options. Just rename astmontray.conf.sample
+	to astmontray.conf and edit it as you want.
+
+	You will also need to enable the AMI module by loading it at startup
+	time. Unless you have it blacklisted in Asterisk's modules.conf it
+	should work out of the box. You don't need to have a special AMI
+	user in order to get Astmontray running, it works without auth too.
+
+
+INSTALLING
+	You will probably need to install an available Qt 4.4.x package
+	for Python (2.5 tested, other versions should work too though).
+
+	On Debian you only need to run (as root):
+	apt-get install python-qt4
+
+	On Mandriva that would be (as root as well):
+	urpmi python-qt4-gui python-qt4-core
+
+	On MacOS X, using the port software from MacPorts.org:
+	sudo port install py25-pyqt4
+
+	However, you might start getting some BUS errors and I believe
+	it's easier and safer to install it from the sources of PyQt
+	available from www.riverbankcomputing.com
+
+USING
+	Just run ./astmontray and have fun :-)
